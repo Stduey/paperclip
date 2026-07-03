@@ -817,6 +817,73 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.addComment).not.toHaveBeenCalled();
   });
 
+  it("lets agents post literal rollup comments to a direct parent when they own a child issue", async () => {
+    const childIssueId = "12121212-1212-4121-8121-121212121212";
+    mockIssueService.getById.mockResolvedValue(makeIssue({
+      id: issueId,
+      status: "in_progress",
+      assigneeAgentId: ownerAgentId,
+    }));
+    mockIssueService.list.mockResolvedValue([makeIssue({
+      id: childIssueId,
+      parentId: issueId,
+      assigneeAgentId: peerAgentId,
+      status: "done",
+    })]);
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: false,
+      action: input.action,
+      reason: "deny_low_trust_boundary",
+      explanation: "Issue is outside this low-trust boundary.",
+    }));
+
+    const res = await request(await createApp(peerActor()))
+      .post(`/api/issues/${issueId}/comments`)
+      .send({ body: "Child TKJ-2045 deliverable is ready for parent synthesis." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockIssueService.list).toHaveBeenCalledWith(companyId, {
+      parentId: issueId,
+      assigneeAgentId: peerAgentId,
+      limit: 1,
+    });
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      issueId,
+      "Child TKJ-2045 deliverable is ready for parent synthesis.",
+      expect.objectContaining({ agentId: peerAgentId }),
+      expect.objectContaining({ authorType: "agent" }),
+    );
+  });
+
+  it("does not let child issue ownership create work products on the parent issue", async () => {
+    const childIssueId = "12121212-1212-4121-8121-121212121212";
+    mockIssueService.getById.mockResolvedValue(makeIssue({
+      id: issueId,
+      status: "in_progress",
+      assigneeAgentId: ownerAgentId,
+    }));
+    mockIssueService.list.mockResolvedValue([makeIssue({
+      id: childIssueId,
+      parentId: issueId,
+      assigneeAgentId: peerAgentId,
+      status: "done",
+    })]);
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: false,
+      action: input.action,
+      reason: "deny_low_trust_boundary",
+      explanation: "Issue is outside this low-trust boundary.",
+    }));
+
+    const res = await request(await createApp(peerActor()))
+      .post(`/api/issues/${issueId}/work-products`)
+      .send({ type: "artifact", provider: "test", title: "Parent artifact" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Issue is outside this actor's authorization boundary");
+    expect(mockWorkProductService.createForIssue).not.toHaveBeenCalled();
+  });
+
   it("rejects peer agents from listing comments when issue read is outside their boundary", async () => {
     mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
       allowed: false,

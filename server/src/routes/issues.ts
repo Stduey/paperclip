@@ -2102,11 +2102,33 @@ export function issueRoutes(
       return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
     }
     const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");
+    if (!boundaryDecision.allowed && await hasDirectChildRollupCommentGrant(issue, actorAgentId)) {
+      return true;
+    }
     if (!boundaryDecision.allowed) {
       res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
       return false;
     }
     return boundaryDecision;
+  }
+
+  async function hasDirectChildRollupCommentGrant(
+    issue: {
+      id: string;
+      companyId: string;
+    },
+    actorAgentId: string,
+  ) {
+    const children = await svc.list(issue.companyId, {
+      parentId: issue.id,
+      assigneeAgentId: actorAgentId,
+      limit: 1,
+    });
+    return children.some((child) =>
+      child.companyId === issue.companyId &&
+      child.parentId === issue.id &&
+      child.assigneeAgentId === actorAgentId
+    );
   }
 
   function isIssueMentionGrantDecision(decision: true | Awaited<ReturnType<typeof decideIssueAccess>>) {
