@@ -202,6 +202,69 @@ describeEmbeddedPostgres("activity service", () => {
     expect(event).toMatchObject({ companyId, actorId: agentId, agentId, runId });
   });
 
+  it("fails closed when an agent activity uses another agent's run id", async () => {
+    const companyId = randomUUID();
+    const ownerAgentId = randomUUID();
+    const ghostAgentId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      {
+        id: ownerAgentId,
+        companyId,
+        name: "RunOwner",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: ghostAgentId,
+        companyId,
+        name: "GhostWriter",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId: ownerAgentId,
+      invocationSource: "assignment",
+      status: "running",
+      contextSnapshot: {},
+    });
+
+    await expect(activityService(db).create({
+      companyId,
+      actorType: "agent",
+      actorId: ghostAgentId,
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: randomUUID(),
+      agentId: ghostAgentId,
+      runId,
+    })).rejects.toMatchObject({
+      status: 401,
+      message: "Agent activity requires a valid Paperclip run id",
+    });
+
+    const persisted = await db.select().from(activityLog);
+    expect(persisted).toHaveLength(0);
+  });
+
   it("returns compact usage and result summaries for issue runs", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
