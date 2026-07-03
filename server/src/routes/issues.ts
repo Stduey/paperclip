@@ -6167,6 +6167,8 @@ export function issueRoutes(
               ...updateFields,
               actorAgentId: actor.agentId ?? null,
               actorUserId: actor.actorType === "user" ? actor.actorId : null,
+              pendingCompletionCommentBody:
+                updateFields.status === "done" ? commentBody ?? null : undefined,
             },
             tx,
           );
@@ -6192,6 +6194,8 @@ export function issueRoutes(
           ...updateFields,
           actorAgentId: actor.agentId ?? null,
           actorUserId: actor.actorType === "user" ? actor.actorId : null,
+          pendingCompletionCommentBody:
+            updateFields.status === "done" ? commentBody ?? null : undefined,
         });
       }
     } catch (err) {

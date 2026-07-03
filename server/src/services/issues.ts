@@ -29,6 +29,7 @@ import {
   issueReadStates,
   issueThreadInteractions,
   issues,
+  issueWorkProducts,
   labels,
   projectWorkspaces,
   projects,
@@ -137,6 +138,56 @@ function applyStatusSideEffects(
     patch.cancelledAt = new Date();
   }
   return patch;
+}
+
+function issueRequiresCompletionEvidence(
+  existing: Pick<typeof issues.$inferSelect, "assigneeAgentId" | "workMode">,
+  patch: Partial<typeof issues.$inferInsert>,
+) {
+  const assigneeAgentId = patch.assigneeAgentId !== undefined ? patch.assigneeAgentId : existing.assigneeAgentId;
+  const workMode = patch.workMode !== undefined ? patch.workMode : existing.workMode;
+  return Boolean(assigneeAgentId) && workMode !== "ask";
+}
+
+async function assertIssueHasCompletionEvidence(
+  dbOrTx: any,
+  existing: Pick<typeof issues.$inferSelect, "id" | "companyId" | "identifier">,
+  pendingCompletionCommentBody?: string | null,
+) {
+  if (typeof pendingCompletionCommentBody === "string" && pendingCompletionCommentBody.trim().length > 0) {
+    return;
+  }
+
+  const [commentEvidence, workProductEvidence] = await Promise.all([
+    dbOrTx
+      .select({ id: issueComments.id })
+      .from(issueComments)
+      .where(and(
+        eq(issueComments.companyId, existing.companyId),
+        eq(issueComments.issueId, existing.id),
+        isNull(issueComments.deletedAt),
+        sql`length(btrim(${issueComments.body})) > 0`,
+      ))
+      .limit(1)
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null),
+    dbOrTx
+      .select({ id: issueWorkProducts.id })
+      .from(issueWorkProducts)
+      .where(and(
+        eq(issueWorkProducts.companyId, existing.companyId),
+        eq(issueWorkProducts.issueId, existing.id),
+      ))
+      .limit(1)
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null),
+  ]);
+
+  if (commentEvidence || workProductEvidence) return;
+
+  throw unprocessable("Deliverable-bearing issues require a substantive comment or work product before done", {
+    code: "missing_completion_evidence",
+    issueId: existing.id,
+    identifier: existing.identifier,
+  });
 }
 
 function readStringFromRecord(record: unknown, key: string) {
@@ -5403,6 +5454,7 @@ export function issueService(db: Db) {
         blockedByIssueIds?: string[];
         actorAgentId?: string | null;
         actorUserId?: string | null;
+        pendingCompletionCommentBody?: string | null;
       },
       dbOrTx: any = db,
     ) => {
@@ -5418,6 +5470,7 @@ export function issueService(db: Db) {
         blockedByIssueIds,
         actorAgentId,
         actorUserId,
+        pendingCompletionCommentBody,
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
@@ -5446,6 +5499,13 @@ export function issueService(db: Db) {
 
       if (nextAssigneeAgentId && nextAssigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
+      }
+      if (
+        issueData.status === "done" &&
+        existing.status !== "done" &&
+        issueRequiresCompletionEvidence(existing, patch)
+      ) {
+        await assertIssueHasCompletionEvidence(dbOrTx, existing, pendingCompletionCommentBody);
       }
       if (patch.status === "in_progress" && !nextAssigneeAgentId && !nextAssigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");

@@ -20,6 +20,7 @@ import {
   issuePlanDecompositions,
   issueRelations,
   issueThreadInteractions,
+  issueWorkProducts,
   issues,
   projectWorkspaces,
   projects,
@@ -299,6 +300,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
 
   afterEach(async () => {
     await db.delete(issueComments);
+    await db.delete(issueWorkProducts);
     await db.delete(issueRelations);
     await db.delete(issueDocuments);
     await db.delete(issueInboxArchives);
@@ -3763,6 +3765,129 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     await expect(
       svc.checkout(blockedId, assigneeAgentId, ["todo", "blocked"], checkoutRunId),
     ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("rejects empty done transitions for deliverable-bearing agent issues", async () => {
+    const companyId = randomUUID();
+    const assigneeAgentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issue = await svc.create(companyId, {
+      title: "Deliver the brief",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId,
+    });
+
+    await expect(svc.update(issue.id, { status: "done" })).rejects.toMatchObject({
+      status: 422,
+      details: {
+        code: "missing_completion_evidence",
+        issueId: issue.id,
+      },
+    });
+
+    const persisted = await db
+      .select({ status: issues.status, completedAt: issues.completedAt })
+      .from(issues)
+      .where(eq(issues.id, issue.id))
+      .then((rows) => rows[0] ?? null);
+    expect(persisted).toMatchObject({ status: "todo", completedAt: null });
+  });
+
+  it("allows done transitions when the same PATCH carries a substantive completion comment", async () => {
+    const companyId = randomUUID();
+    const assigneeAgentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issue = await svc.create(companyId, {
+      title: "Deliver with summary",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId,
+    });
+
+    const updated = await svc.update(issue.id, {
+      status: "done",
+      pendingCompletionCommentBody: "Done: attached the implementation summary.",
+    });
+
+    expect(updated).toMatchObject({ id: issue.id, status: "done" });
+    expect(updated?.completedAt).toBeTruthy();
+  });
+
+  it("allows done transitions when the issue already has a work product", async () => {
+    const companyId = randomUUID();
+    const assigneeAgentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issue = await svc.create(companyId, {
+      title: "Deliver artifact",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId,
+    });
+    await db.insert(issueWorkProducts).values({
+      companyId,
+      issueId: issue.id,
+      type: "artifact",
+      provider: "test",
+      title: "Artifact",
+      status: "ready",
+    });
+
+    const updated = await svc.update(issue.id, { status: "done" });
+
+    expect(updated).toMatchObject({ id: issue.id, status: "done" });
+    expect(updated?.completedAt).toBeTruthy();
   });
 
   it("wakes parents only when all direct children are terminal", async () => {
