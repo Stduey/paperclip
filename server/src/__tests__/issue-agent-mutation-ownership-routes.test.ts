@@ -1160,6 +1160,32 @@ describe("agent issue mutation checkout ownership", () => {
     );
   });
 
+  it("stores the authenticated agent run id as originRunId on issue create", async () => {
+    const app = await createApp(ownerActor());
+
+    await request(app).post(`/api/companies/${companyId}/issues`).send({
+      title: "Downstream source work",
+    }).expect(201);
+
+    expect(mockIssueService.create).toHaveBeenCalledWith(
+      companyId,
+      expect.objectContaining({ originRunId: ownerRunId }),
+    );
+  });
+
+  it("stores the authenticated agent run id as originRunId on child issue create", async () => {
+    const app = await createApp(ownerActor());
+
+    await request(app).post(`/api/issues/${issueId}/children`).send({
+      title: "Downstream child source work",
+    }).expect(201);
+
+    expect(mockIssueService.createChild).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({ originRunId: ownerRunId }),
+    );
+  });
+
   it("rejects agent-created work products without an authenticated run id", async () => {
     const app = await createApp({
       type: "agent",

@@ -5333,6 +5333,7 @@ export function issueRoutes(
       ...(taskBridgeOriginForActor(req) ?? {}),
       id: issueId,
       executionPolicy,
+      originRunId: actor.actorType === "agent" ? actor.runId : null,
       ...(sourceTrust ? { sourceTrust } : {}),
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -5495,6 +5496,7 @@ export function issueRoutes(
       ...(taskBridgeOriginForActor(req) ?? {}),
       id: issueId,
       executionPolicy,
+      originRunId: actor.actorType === "agent" ? actor.runId : null,
       ...(currentSerializedChild
         ? {
           status: "blocked",

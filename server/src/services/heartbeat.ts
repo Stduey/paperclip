@@ -1736,6 +1736,7 @@ function normalizeMaxConcurrentRuns(value: unknown) {
 
 interface WakeupOptions {
   source?: "timer" | "assignment" | "on_demand" | "automation";
+  mode?: "execute" | "write_only";
   triggerDetail?: "manual" | "ping" | "callback" | "system";
   reason?: string | null;
   payload?: Record<string, unknown> | null;
@@ -12192,6 +12193,78 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     if (source !== "timer" && !policy.wakeOnDemand) {
       await writeSkippedRequest("heartbeat.wakeOnDemand.disabled");
       return null;
+    }
+
+    if (opts.mode === "write_only") {
+      if (source !== "on_demand") {
+        await writeSkippedRequest("heartbeat.write_only.invalid_source", {
+          error: "Write-only wakeups must use source on_demand",
+        });
+        return null;
+      }
+
+      const now = new Date();
+      const wakeupRequest = await db
+        .insert(agentWakeupRequests)
+        .values({
+          companyId: agent.companyId,
+          agentId,
+          source,
+          triggerDetail,
+          reason,
+          payload,
+          status: "completed",
+          requestedByActorType: opts.requestedByActorType ?? null,
+          requestedByActorId: opts.requestedByActorId ?? null,
+          idempotencyKey: opts.idempotencyKey ?? null,
+          finishedAt: now,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      const newRun = await db
+        .insert(heartbeatRuns)
+        .values({
+          companyId: agent.companyId,
+          agentId,
+          invocationSource: source,
+          triggerDetail,
+          status: "succeeded",
+          wakeupRequestId: wakeupRequest.id,
+          contextSnapshot: {
+            ...enrichedContextSnapshot,
+            writeOnly: true,
+            writeOnlyReason: "attribution_run_without_executor_dispatch",
+          },
+          sessionIdBefore: sessionBefore,
+          continuationAttempt,
+          startedAt: now,
+          finishedAt: now,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      await db
+        .update(agentWakeupRequests)
+        .set({
+          runId: newRun.id,
+          updatedAt: now,
+        })
+        .where(eq(agentWakeupRequests.id, wakeupRequest.id));
+
+      publishLiveEvent({
+        companyId: newRun.companyId,
+        type: "heartbeat.run.queued",
+        payload: {
+          runId: newRun.id,
+          agentId: newRun.agentId,
+          invocationSource: newRun.invocationSource,
+          triggerDetail: newRun.triggerDetail,
+          wakeupRequestId: newRun.wakeupRequestId,
+        },
+      });
+
+      return newRun;
     }
 
     const genericTimerWake =

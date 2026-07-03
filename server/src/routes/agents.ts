@@ -3298,6 +3298,7 @@ export function agentRoutes(
 
     const run = await heartbeat.wakeup(id, {
       source: opts.source,
+      mode: req.body.mode,
       triggerDetail: req.body.triggerDetail ?? "manual",
       reason: req.body.reason ?? null,
       payload: req.body.payload ?? null,

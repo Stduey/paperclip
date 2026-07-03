@@ -1312,7 +1312,7 @@ registry.registerPath({
   method: "post",
   path: "/api/agents/{id}/wakeup",
   tags: ["agents"],
-  summary: "Wake up an agent",
+  summary: "Wake up an agent or mint a write-only attribution run",
   request: {
     params: z.object({ id: z.string() }),
     body: jsonBody(wakeAgentSchema),

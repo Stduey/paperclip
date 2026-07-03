@@ -648,6 +648,38 @@ describe("agent live run routes", () => {
     }));
   });
 
+  it("forwards write-only wakeup mode for attribution-only run minting", async () => {
+    const res = await requestApp(
+      await createApp(),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${routeAgentId}/wakeup?companyId=company-1`)
+        .send({
+          source: "on_demand",
+          mode: "write_only",
+          triggerDetail: "manual",
+          reason: "telegram_write_attribution",
+          payload: { issueId: "issue-1" },
+        }),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(routeAgentId, {
+      source: "on_demand",
+      mode: "write_only",
+      triggerDetail: "manual",
+      reason: "telegram_write_attribution",
+      payload: { issueId: "issue-1" },
+      idempotencyKey: null,
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      contextSnapshot: {
+        triggeredBy: "board",
+        actorId: "local-board",
+        forceFreshSession: false,
+      },
+    });
+  });
+
   it("logs legacy bootstrap invoke activity against the minted run id", async () => {
     const res = await requestApp(
       await createApp(),

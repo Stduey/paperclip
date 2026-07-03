@@ -330,6 +330,91 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     expect(runRows).toHaveLength(0);
   });
 
+  it("mints write-only attribution runs without dispatching the executor or locking an issue", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Relay target",
+      status: "in_progress",
+      priority: "critical",
+      assigneeAgentId: agentId,
+    });
+
+    const run = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      mode: "write_only",
+      triggerDetail: "manual",
+      reason: "telegram_write_attribution",
+      payload: { issueId },
+    });
+
+    expect(run).not.toBeNull();
+    expect(run).toMatchObject({
+      agentId,
+      status: "succeeded",
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+    });
+    expect(mockAdapterExecute).not.toHaveBeenCalled();
+
+    const [storedRun, wakeup, issue] = await Promise.all([
+      db
+        .select({
+          status: heartbeatRuns.status,
+          contextSnapshot: heartbeatRuns.contextSnapshot,
+          startedAt: heartbeatRuns.startedAt,
+          finishedAt: heartbeatRuns.finishedAt,
+          wakeupRequestId: heartbeatRuns.wakeupRequestId,
+        })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, run!.id))
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          status: agentWakeupRequests.status,
+          runId: agentWakeupRequests.runId,
+          finishedAt: agentWakeupRequests.finishedAt,
+        })
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.runId, run!.id))
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          checkoutRunId: issues.checkoutRunId,
+          executionRunId: issues.executionRunId,
+          executionAgentNameKey: issues.executionAgentNameKey,
+          executionLockedAt: issues.executionLockedAt,
+        })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0] ?? null),
+    ]);
+
+    expect(storedRun).toMatchObject({
+      status: "succeeded",
+      contextSnapshot: expect.objectContaining({
+        issueId,
+        writeOnly: true,
+        wakeReason: "telegram_write_attribution",
+      }),
+    });
+    expect(storedRun?.startedAt).toBeInstanceOf(Date);
+    expect(storedRun?.finishedAt).toBeInstanceOf(Date);
+    expect(wakeup).toMatchObject({
+      status: "completed",
+      runId: run!.id,
+    });
+    expect(wakeup?.finishedAt).toBeInstanceOf(Date);
+    expect(issue).toEqual({
+      checkoutRunId: null,
+      executionRunId: null,
+      executionAgentNameKey: null,
+      executionLockedAt: null,
+    });
+  });
+
   it("rate-limits skipped generic timer wakes by advancing the timer baseline", async () => {
     const { agentId } = await seedCompanyAndAgent({
       heartbeatConfig: {
