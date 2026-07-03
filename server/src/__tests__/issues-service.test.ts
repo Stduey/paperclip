@@ -572,6 +572,52 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(persisted?.createdByRunId).toBe(runId);
   });
 
+  it("rejects agent comments when the run belongs to a different agent", async () => {
+    const companyId = await seedAssignableAgentCompany();
+    const creditedAgentId = randomUUID();
+    const orchestratorAgentId = randomUUID();
+    const orchestratorRunId = randomUUID();
+    await db.insert(agents).values([
+      agentRow(companyId, {
+        id: creditedAgentId,
+        name: "CreditedSeat",
+      }),
+      agentRow(companyId, {
+        id: orchestratorAgentId,
+        name: "Orchestrator",
+      }),
+    ]);
+    await db.insert(heartbeatRuns).values({
+      id: orchestratorRunId,
+      companyId,
+      agentId: orchestratorAgentId,
+      invocationSource: "assignment",
+      status: "running",
+      contextSnapshot: {},
+    });
+    const issue = await svc.create(companyId, {
+      title: "Do not ghost-write this seat",
+      description: null,
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: creditedAgentId,
+    });
+
+    await expect(svc.addComment(issue.id, "Fabricated under another seat.", {
+      agentId: creditedAgentId,
+      runId: orchestratorRunId,
+    })).rejects.toMatchObject({
+      status: 401,
+      message: "Agent comment requires a valid Paperclip run id",
+    });
+
+    const persisted = await db
+      .select()
+      .from(issueComments)
+      .where(eq(issueComments.issueId, issue.id));
+    expect(persisted).toHaveLength(0);
+  });
+
   it("fails closed for checkout when the run id is not present in heartbeat_runs", async () => {
     const companyId = await seedAssignableAgentCompany();
     const agentId = randomUUID();

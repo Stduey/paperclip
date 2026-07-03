@@ -4782,6 +4782,7 @@ export function issueRoutes(
     const createdByRunId = await requireHeartbeatRunIdForAttributedWrite(db, {
       runId: actor.runId,
       companyId: issue.companyId,
+      agentId: actor.agentId,
       required: actor.actorType === "agent",
       label: "Agent work product write",
     });

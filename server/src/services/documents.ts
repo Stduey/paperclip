@@ -225,6 +225,7 @@ export function documentService(db: Db) {
           const createdByRunId = await requireHeartbeatRunIdForAttributedWrite(tx, {
             runId: input.createdByRunId,
             companyId: issue.companyId,
+            agentId: input.createdByAgentId,
             required: Boolean(input.createdByAgentId),
             label: "Agent document write",
           });

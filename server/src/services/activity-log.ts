@@ -74,6 +74,7 @@ export async function logActivity(db: Db, input: LogActivityInput) {
   const runId = await requireHeartbeatRunIdForAttributedWrite(db, {
     runId: input.runId,
     companyId: input.companyId,
+    agentId: input.agentId,
     required: input.actorType === "agent" || Boolean(input.agentId),
     label: "Agent activity",
   });

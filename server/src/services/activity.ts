@@ -583,6 +583,7 @@ export function activityService(db: Db) {
       const runId = await requireHeartbeatRunIdForAttributedWrite(db, {
         runId: data.runId,
         companyId: data.companyId,
+        agentId: data.agentId,
         required: data.actorType === "agent" || Boolean(data.agentId),
         label: "Agent activity",
       });

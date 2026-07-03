@@ -5769,6 +5769,7 @@ export function issueService(db: Db) {
       const effectiveCheckoutRunId = await requireHeartbeatRunIdForAttributedWrite(db, {
         runId: checkoutRunId,
         companyId: issueCompany.companyId,
+        agentId,
         required: true,
         label: "Agent checkout",
       });
@@ -6441,6 +6442,7 @@ export function issueService(db: Db) {
       const createdByRunId = await requireHeartbeatRunIdForAttributedWrite(dbOrTx, {
         runId: actor.runId,
         companyId: issue.companyId,
+        agentId: actor.agentId,
         required: Boolean(actor.agentId),
         label: "Agent comment",
       });

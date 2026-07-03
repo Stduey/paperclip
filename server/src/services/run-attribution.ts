@@ -9,10 +9,13 @@ async function findHeartbeatRunId(
   db: DbReader,
   runId: string,
   companyId?: string | null,
+  agentId?: string | null,
 ) {
-  const conditions = companyId
-    ? and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, companyId))
-    : eq(heartbeatRuns.id, runId);
+  const conditions = and(
+    eq(heartbeatRuns.id, runId),
+    ...(companyId ? [eq(heartbeatRuns.companyId, companyId)] : []),
+    ...(agentId ? [eq(heartbeatRuns.agentId, agentId)] : []),
+  );
   const run = await db
     .select({ id: heartbeatRuns.id })
     .from(heartbeatRuns)
@@ -38,6 +41,7 @@ export async function requireHeartbeatRunIdForAttributedWrite(
   input: {
     runId: string | null | undefined;
     companyId?: string | null;
+    agentId?: string | null;
     required?: boolean;
     label?: string;
   },
@@ -48,7 +52,7 @@ export async function requireHeartbeatRunIdForAttributedWrite(
     return null;
   }
 
-  const runId = await findHeartbeatRunId(db, candidate, input.companyId);
+  const runId = await findHeartbeatRunId(db, candidate, input.companyId, input.agentId);
   if (!runId) throw unauthorized(`${input.label ?? "Attributed write"} requires a valid Paperclip run id`);
 
   return runId;
