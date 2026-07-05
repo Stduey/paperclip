@@ -2182,7 +2182,7 @@ export function issueRoutes(
       assigneeAgentId: string | null;
       assigneeUserId: string | null;
     },
-    options: { allowCeoReconcileGrant?: boolean } = {},
+    options: { allowCeoReconcileGrant?: boolean; allowControlPlaneWithoutCheckout?: boolean } = {},
   ) {
     if (req.actor.type !== "agent") return true;
     const actorAgentId = req.actor.agentId;
@@ -2256,6 +2256,9 @@ export function issueRoutes(
     }
     const runId = requireAgentRunId(req, res);
     if (!runId) return false;
+    if (options.allowControlPlaneWithoutCheckout) {
+      return true;
+    }
     const ownership = await svc.assertCheckoutOwner(issue.id, actorAgentId, runId);
     if (ownership.adoptedFromRunId) {
       const actor = getActorInfo(req);
@@ -2276,6 +2279,25 @@ export function issueRoutes(
       });
     }
     return true;
+  }
+
+  function isControlPlaneIssuePatchWithoutCheckoutAllowed(
+    body: Record<string, unknown>,
+    issue: { status: string; assigneeAgentId: string | null },
+    actorAgentId: string | null | undefined,
+  ) {
+    if (!actorAgentId || issue.status !== "in_progress" || issue.assigneeAgentId !== actorAgentId) return false;
+
+    const allowedKeys = new Set(["status", "assigneeAgentId", "assigneeUserId", "comment", "reviewRequest"]);
+    const keys = Object.keys(body).filter((key) => body[key] !== undefined);
+    if (keys.length === 0 || keys.some((key) => !allowedKeys.has(key))) return false;
+
+    return (
+      body.status === "in_review" ||
+      body.assigneeAgentId !== undefined ||
+      body.assigneeUserId !== undefined ||
+      body.reviewRequest !== undefined
+    );
   }
 
   async function assertFreshTaskWatchdogSourceMutation(
@@ -5878,8 +5900,11 @@ export function issueRoutes(
     assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
     const ceoReconcileGrant = await getCeoReconcileGrant(req, existing.companyId);
     if (ceoReconcileGrant && !assertCeoReconcilePatchAllowed(req, res)) return;
+    const allowControlPlaneWithoutCheckout = req.actor.type === "agent" &&
+      isControlPlaneIssuePatchWithoutCheckoutAllowed(req.body, existing, req.actor.agentId);
     if (!(await assertAgentIssueMutationAllowed(req, res, existing, {
       allowCeoReconcileGrant: Boolean(ceoReconcileGrant),
+      allowControlPlaneWithoutCheckout,
     }))) return;
     if (!(await assertCheapRecoveryIssueAssigneeProfileAllowed(req, res, existing, req.body))) return;
 

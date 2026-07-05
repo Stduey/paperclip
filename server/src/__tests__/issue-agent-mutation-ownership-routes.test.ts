@@ -1144,6 +1144,45 @@ describe("agent issue mutation checkout ownership", () => {
     );
   });
 
+  it("allows same-assignee control-plane handoff patches without adopting a null checkout lock", async () => {
+    const writeOnlyRunId = "12121212-1212-4121-8121-121212121212";
+    mockIssueService.getById.mockResolvedValue(makeIssue({
+      checkoutRunId: null,
+      executionRunId: null,
+    }));
+    mockAgentService.resolveByReference.mockResolvedValueOnce({
+      ambiguous: false,
+      agent: makeAgent(peerAgentId),
+    });
+
+    const app = await createApp({
+      ...ownerActor(),
+      runId: writeOnlyRunId,
+    }, createRunContextDb({
+      mode: "write_only",
+      status: "succeeded",
+    }, ownerAgentId, writeOnlyRunId));
+
+    const res = await request(app).patch(`/api/issues/${issueId}`).send({
+      status: "in_review",
+      assigneeAgentId: peerAgentId,
+      assigneeUserId: "board-user",
+      comment: "Handoff for review.",
+    });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({
+        status: "in_review",
+        assigneeAgentId: peerAgentId,
+        assigneeUserId: "board-user",
+        actorAgentId: ownerAgentId,
+      }),
+    );
+  });
+
   it("stores the authenticated agent run id when creating work products", async () => {
     const app = await createApp(ownerActor());
 
