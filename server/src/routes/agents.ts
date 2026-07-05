@@ -52,7 +52,7 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
+import { assertBoard, assertBoardOrAgent, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectAgentAdapterWorkspaceCommandPaths,
@@ -3571,19 +3571,28 @@ export function agentRoutes(
   });
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
-    assertBoard(req);
+    assertBoardOrAgent(req);
     const runId = req.params.runId as string;
     const existing = await heartbeat.getRun(runId);
     if (existing) {
       assertCompanyAccess(req, existing.companyId);
+      if (req.actor.type === "agent" && existing.agentId !== req.actor.agentId) {
+        throw forbidden("Agents can only cancel their own runs");
+      }
+    } else if (req.actor.type === "agent") {
+      res.status(404).json({ error: "Heartbeat run not found" });
+      return;
     }
     const run = await heartbeat.cancelRun(runId);
 
     if (run) {
+      const actor = getActorInfo(req);
       await logActivity(db, {
         companyId: run.companyId,
-        actorType: "user",
-        actorId: req.actor.userId ?? "board",
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: req.actor.type === "agent" ? run.id : actor.runId,
         action: "heartbeat.cancelled",
         entityType: "heartbeat_run",
         entityId: run.id,

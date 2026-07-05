@@ -8,7 +8,9 @@ const mockAgentService = vi.hoisted(() => ({
 
 const mockHeartbeatService = vi.hoisted(() => ({
   buildRunOutputSilence: vi.fn(),
+  cancelRun: vi.fn(),
   decorateActiveRunStatus: vi.fn(),
+  getRun: vi.fn(),
   getRunIssueSummary: vi.fn(),
   getActiveRunIssueSummaryForAgent: vi.fn(),
   getRunLogAccess: vi.fn(),
@@ -200,11 +202,23 @@ describe("agent live run routes", () => {
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1"]);
     mockHeartbeatService.buildRunOutputSilence.mockResolvedValue(null);
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "agent-1",
+      status: "cancelled",
+    });
     mockHeartbeatService.decorateActiveRunStatus.mockImplementation((run) => ({
       ...run,
       currentStatusMessage: null,
       currentStatusUpdatedAt: null,
     }));
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "agent-1",
+      status: "running",
+    });
     mockHeartbeatService.getRunIssueSummary.mockResolvedValue({
       id: "run-1",
       status: "running",
@@ -241,6 +255,52 @@ describe("agent live run routes", () => {
       invocationSource: "on_demand",
       triggerDetail: "manual",
     });
+  });
+
+  it("allows an agent to cancel its own heartbeat run without board access", async () => {
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: "agent-1",
+        companyId: "company-1",
+        source: "agent_key",
+      }),
+      (baseUrl) => request(baseUrl).post("/api/heartbeat-runs/run-1/cancel"),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1");
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      companyId: "company-1",
+      actorType: "agent",
+      actorId: "agent-1",
+      agentId: "agent-1",
+      runId: "run-1",
+      action: "heartbeat.cancelled",
+      entityType: "heartbeat_run",
+      entityId: "run-1",
+      details: { agentId: "agent-1" },
+    }));
+  });
+
+  it("keeps cross-agent heartbeat-run cancellation board-gated", async () => {
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: "agent-2",
+        companyId: "company-1",
+        source: "agent_key",
+        runId: "run-2",
+      }),
+      (baseUrl) => request(baseUrl).post("/api/heartbeat-runs/run-1/cancel"),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body).toEqual({ error: "Agents can only cancel their own runs" });
+    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "heartbeat.cancelled",
+    }));
   });
 
   it("returns a compact active run payload for issue polling", async () => {

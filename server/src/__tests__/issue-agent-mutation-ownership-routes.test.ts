@@ -817,6 +817,34 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.addComment).not.toHaveBeenCalled();
   });
 
+  it("passes an N100-style agent run id through when the assignee posts a run-backed comment", async () => {
+    const n100RunId = "de0b7cfb-0000-4000-8000-000000000000";
+    const app = await createApp({
+      type: "agent",
+      agentId: ownerAgentId,
+      companyId,
+      source: "agent_key",
+      runId: n100RunId,
+    });
+
+    const res = await request(app)
+      .post(`/api/issues/${issueId}/comments`)
+      .send({ body: "Reggie N100 grade mirror, run-backed." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      issueId,
+      "Reggie N100 grade mirror, run-backed.",
+      {
+        agentId: ownerAgentId,
+        userId: undefined,
+        runId: n100RunId,
+      },
+      expect.objectContaining({ authorType: "agent" }),
+    );
+    expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(n100RunId);
+  });
+
   it("lets agents post literal rollup comments to a direct parent when they own a child issue", async () => {
     const childIssueId = "12121212-1212-4121-8121-121212121212";
     mockIssueService.getById.mockResolvedValue(makeIssue({
