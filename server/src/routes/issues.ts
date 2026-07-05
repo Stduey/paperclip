@@ -2624,6 +2624,13 @@ export function issueRoutes(
       context.resumeRequiresNormalModel === true;
   }
 
+  function isCorrectiveHandoffRunContext(contextSnapshot: unknown) {
+    if (!contextSnapshot || typeof contextSnapshot !== "object" || Array.isArray(contextSnapshot)) return false;
+    const context = contextSnapshot as Record<string, unknown>;
+    return context.handoffRequired === true ||
+      context.wakeReason === "finish_successful_run_handoff";
+  }
+
   function requestsCheapIssueAssigneeModelProfile(input: { assigneeAdapterOverrides?: unknown }) {
     const overrides = input.assigneeAdapterOverrides;
     return !!overrides &&
@@ -2668,6 +2675,27 @@ export function issueRoutes(
         modelProfile: "cheap",
         recoveryIntent: "status_only",
         resumeRequiresNormalModel: true,
+      },
+    });
+    return false;
+  }
+
+  async function assertCorrectiveHandoffDispositionAllowed(
+    req: Request,
+    res: Response,
+    issue: { id: string; companyId: string },
+    input: { status?: unknown },
+  ) {
+    if (input.status !== "done") return true;
+    const run = await loadActorRunContext(req, issue.companyId);
+    if (!run || !isCorrectiveHandoffRunContext(run.contextSnapshot)) return true;
+
+    res.status(422).json({
+      error: "Corrective handoff runs cannot mark issues done",
+      details: {
+        issueId: issue.id,
+        runId: run.id,
+        allowedDispositions: ["in_review", "blocked", "explicit_continuation"],
       },
     });
     return false;
@@ -5907,6 +5935,7 @@ export function issueRoutes(
       allowControlPlaneWithoutCheckout,
     }))) return;
     if (!(await assertCheapRecoveryIssueAssigneeProfileAllowed(req, res, existing, req.body))) return;
+    if (!(await assertCorrectiveHandoffDispositionAllowed(req, res, existing, req.body))) return;
 
     const actor = getActorInfo(req);
     const isClosed = isClosedIssueStatus(existing.status);

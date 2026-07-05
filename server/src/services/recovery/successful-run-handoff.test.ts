@@ -91,7 +91,16 @@ describe("successful run handoff decision", () => {
     });
     expect(decision.instruction).toContain("Resolve the missing disposition before creating or revising any new artifacts");
     expect(decision.instruction).toContain("Choose **exactly one** outcome");
+    expect(decision.instruction).not.toContain("Mark it `done`");
+    expect(decision.instruction).toContain("Do not mark the issue `done` from this corrective handoff path");
     expect(decision.instruction).toContain("record an explicit continuation path");
+    expect(decision.payload).toMatchObject({
+      validDispositionOptions: [
+        "send_for_review_or_ask_for_input",
+        "mark_blocked",
+        "delegate_or_continue_from_checkpoint",
+      ],
+    });
   });
 
   it("does not queue when the issue already has a valid disposition", () => {

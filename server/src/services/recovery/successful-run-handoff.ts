@@ -17,7 +17,6 @@ export const LEGACY_SUCCESSFUL_RUN_HANDOFF_NOTICE_PREFIXES = [
 ] as const;
 
 export const SUCCESSFUL_RUN_HANDOFF_OPTIONS = [
-  "mark_done_or_cancelled",
   "send_for_review_or_ask_for_input",
   "mark_blocked",
   "delegate_or_continue_from_checkpoint",
@@ -321,17 +320,16 @@ export function buildSuccessfulRunHandoffInstruction(input: {
     "",
     "Resolve the missing disposition before creating or revising any new artifacts. Choose **exactly one** outcome and perform the matching Paperclip action:",
     "",
-    "**Is the issue finished?**",
-    "1. Mark it `done` (scope complete) or `cancelled` (intentionally stopped).",
-    "",
     "**Does someone else need to look at it?**",
-    "2. Move it to `in_review` with a real reviewer path — `executionState.currentParticipant`, a human owner via `assigneeUserId`, a pending issue-thread interaction, or a linked pending approval.",
+    "1. Move it to `in_review` with a real reviewer path — `executionState.currentParticipant`, a human owner via `assigneeUserId`, a pending issue-thread interaction, or a linked pending approval.",
     "",
     "**Can it not continue right now?**",
-    "3. Mark it `blocked` with first-class blockers (`blockedByIssueIds`) or a clearly named unblock owner/action.",
+    "2. Mark it `blocked` with first-class blockers (`blockedByIssueIds`) or a clearly named unblock owner/action.",
     "",
     "**Is there more work to do?**",
-    `4. Either delegate follow-up work (create/link a follow-up issue and block this one on it, or close this issue if its scope is independently complete) or record an explicit continuation path with \`resumeIntent: true\`, \`resumeFromRunId: ${input.sourceRunId}\`, and a concrete next action. Do not perform the remaining source work in this recovery run; the follow-up/resume wake must use the normal model lane.`,
+    `3. Either delegate follow-up work (create/link a follow-up issue and block this one on it) or record an explicit continuation path with \`resumeIntent: true\`, \`resumeFromRunId: ${input.sourceRunId}\`, and a concrete next action. Do not perform the remaining source work in this recovery run; the follow-up/resume wake must use the normal model lane.`,
+    "",
+    "Do not mark the issue `done` from this corrective handoff path. If review handoff failed or is incomplete, leave the issue `in_review`, `blocked`, or explicitly continued.",
     "",
     "Comments, document revisions, work-product writes, and continuation summaries are supporting evidence only — they do not satisfy this handoff unless the issue state/path also records one valid disposition. If this wake is status-only recovery, document or plan updates are not allowed.",
   ].join("\n");

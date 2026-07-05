@@ -1381,6 +1381,32 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueApprovalService.unlink).not.toHaveBeenCalled();
   });
 
+  it("rejects corrective handoff runs that try to resolve failed handoff recovery as done", async () => {
+    const app = await createApp(
+      ownerActor(),
+      createRunContextDb({
+        wakeReason: "finish_successful_run_handoff",
+        handoffRequired: true,
+        sourceRunId: "66666666-6666-4666-8666-666666666666",
+      }),
+    );
+
+    const res = await request(app).patch(`/api/issues/${issueId}`).send({
+      status: "done",
+      comment: "Done after failed handoff.",
+    });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body.error).toBe("Corrective handoff runs cannot mark issues done");
+    expect(res.body.details).toMatchObject({
+      issueId,
+      runId: ownerRunId,
+      allowedDispositions: ["in_review", "blocked", "explicit_continuation"],
+    });
+    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(issueId, ownerAgentId, ownerRunId);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "issue create",
