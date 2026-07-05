@@ -1167,6 +1167,22 @@ describe("agent issue mutation checkout ownership", () => {
       status: "in_review",
       assigneeAgentId: peerAgentId,
       assigneeUserId: "board-user",
+      executionPolicy: {
+        mode: "normal",
+        commentRequired: true,
+        stages: [{
+          id: "13131313-1313-4131-8131-131313131313",
+          type: "review",
+          approvalsNeeded: 1,
+          participants: [{
+            id: "14141414-1414-4141-8141-141414141414",
+            type: "agent",
+            agentId: peerAgentId,
+            userId: null,
+          }],
+        }],
+      },
+      reviewRequest: { instructions: "Cold verify the packet." },
       comment: "Handoff for review.",
     });
 
@@ -1177,7 +1193,15 @@ describe("agent issue mutation checkout ownership", () => {
       expect.objectContaining({
         status: "in_review",
         assigneeAgentId: peerAgentId,
-        assigneeUserId: "board-user",
+        executionPolicy: expect.objectContaining({
+          stages: expect.arrayContaining([
+            expect.objectContaining({ type: "review" }),
+          ]),
+        }),
+        executionState: expect.objectContaining({
+          reviewRequest: { instructions: "Cold verify the packet." },
+          status: "pending",
+        }),
         actorAgentId: ownerAgentId,
       }),
     );

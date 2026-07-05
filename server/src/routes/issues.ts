@@ -2288,7 +2288,14 @@ export function issueRoutes(
   ) {
     if (!actorAgentId || issue.status !== "in_progress" || issue.assigneeAgentId !== actorAgentId) return false;
 
-    const allowedKeys = new Set(["status", "assigneeAgentId", "assigneeUserId", "comment", "reviewRequest"]);
+    const allowedKeys = new Set([
+      "status",
+      "assigneeAgentId",
+      "assigneeUserId",
+      "comment",
+      "executionPolicy",
+      "reviewRequest",
+    ]);
     const keys = Object.keys(body).filter((key) => body[key] !== undefined);
     if (keys.length === 0 || keys.some((key) => !allowedKeys.has(key))) return false;
 
