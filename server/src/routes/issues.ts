@@ -2225,6 +2225,10 @@ export function issueRoutes(
       }
       return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
     }
+    if (options.allowControlPlaneWithoutCheckout) {
+      const runId = requireAgentRunId(req, res);
+      return Boolean(runId);
+    }
     const boundaryDecision = await decideIssueAccess(req, issue, "issue:mutate");
     if (!boundaryDecision.allowed) {
       res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
@@ -2265,9 +2269,6 @@ export function issueRoutes(
     }
     const runId = requireAgentRunId(req, res);
     if (!runId) return false;
-    if (options.allowControlPlaneWithoutCheckout) {
-      return true;
-    }
     const ownership = await svc.assertCheckoutOwner(issue.id, actorAgentId, runId);
     if (ownership.adoptedFromRunId) {
       const actor = getActorInfo(req);
@@ -2314,6 +2315,26 @@ export function issueRoutes(
       body.assigneeUserId !== undefined ||
       body.reviewRequest !== undefined
     );
+  }
+
+  async function isBoardTerminalCleanupPatchWithoutCheckoutAllowed(
+    body: Record<string, unknown>,
+    issue: {
+      companyId: string;
+      status: string;
+      assigneeAgentId: string | null;
+      checkoutRunId?: string | null;
+      executionRunId?: string | null;
+    },
+    actorAgentId: string | null | undefined,
+  ) {
+    if (!actorAgentId || isClosedIssueStatus(issue.status)) return false;
+    if (issue.checkoutRunId != null || issue.executionRunId != null) return false;
+    const keys = Object.keys(body).filter((key) => body[key] !== undefined);
+    if (keys.length === 0 || keys.some((key) => key !== "status" && key !== "comment")) return false;
+    if (!isClosedIssueStatus(typeof body.status === "string" ? body.status : null)) return false;
+    if (typeof body.comment !== "string" || body.comment.trim().length === 0) return false;
+    return hasAgentIssueBoardAccess(actorAgentId, issue.companyId);
   }
 
   async function assertFreshTaskWatchdogSourceMutation(
@@ -5944,8 +5965,10 @@ export function issueRoutes(
     assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
     const ceoReconcileGrant = await getCeoReconcileGrant(req, existing.companyId);
     if (ceoReconcileGrant && !assertCeoReconcilePatchAllowed(req, res)) return;
-    const allowControlPlaneWithoutCheckout = req.actor.type === "agent" &&
-      isControlPlaneIssuePatchWithoutCheckoutAllowed(req.body, existing, req.actor.agentId);
+    const allowControlPlaneWithoutCheckout = req.actor.type === "agent" && (
+      isControlPlaneIssuePatchWithoutCheckoutAllowed(req.body, existing, req.actor.agentId) ||
+      await isBoardTerminalCleanupPatchWithoutCheckoutAllowed(req.body, existing, req.actor.agentId)
+    );
     if (!(await assertAgentIssueMutationAllowed(req, res, existing, {
       allowCeoReconcileGrant: Boolean(ceoReconcileGrant),
       allowControlPlaneWithoutCheckout,

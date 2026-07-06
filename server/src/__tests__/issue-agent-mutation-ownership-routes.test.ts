@@ -868,6 +868,72 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
+  it("lets issue-board-access owners terminal-cleanup their lock-clear in-progress issue", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({
+      status: "in_progress",
+      assigneeAgentId: ownerAgentId,
+    }));
+    mockIssueService.assertCheckoutOwner.mockRejectedValue(new Error("checkout ownership should not be required"));
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: input.action === "issue:read" || input.action === "issue:mutate",
+      action: input.action,
+      reason: "allow_explicit_grant",
+      explanation: "Allowed by test boundary default.",
+    }));
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === ownerAgentId) return makeAgent(ownerAgentId, { permissions: { canCreateAgents: false, issueBoardAccess: true } });
+      return null;
+    });
+
+    const res = await request(await createApp(ownerActor()))
+      .patch(`/api/issues/${issueId}`)
+      .send({ status: "cancelled", comment: "Stale duplicate cleanup." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({
+        status: "cancelled",
+        actorAgentId: ownerAgentId,
+      }),
+    );
+  });
+
+  it("lets issue-board-access agents terminal-cleanup another agent's lock-clear stale issue", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({
+      status: "blocked",
+      assigneeAgentId: ownerAgentId,
+      checkoutRunId: null,
+      executionRunId: null,
+    }));
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: false,
+      action: input.action,
+      reason: "deny_missing_grant",
+      explanation: "Boundary would deny without the terminal-cleanup override.",
+    }));
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === peerAgentId) return makeAgent(peerAgentId, { permissions: { canCreateAgents: false, issueBoardAccess: true } });
+      if (id === ownerAgentId) return makeAgent(ownerAgentId);
+      return null;
+    });
+
+    const res = await request(await createApp(peerActor()))
+      .patch(`/api/issues/${issueId}`)
+      .send({ status: "done", comment: "Post-reaper lock-clear closure." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({
+        status: "done",
+        actorAgentId: peerAgentId,
+      }),
+    );
+  });
+
   it("passes an N100-style agent run id through when the assignee posts a run-backed comment", async () => {
     const n100RunId = "de0b7cfb-0000-4000-8000-000000000000";
     const app = await createApp({
