@@ -71,6 +71,14 @@ describe("issuesApi.list", () => {
     );
   });
 
+  it("passes board projection through to the company issues endpoint", async () => {
+    await issuesApi.list("company-1", { status: "todo", limit: 100, projection: "board" });
+
+    expect(mockApi.get).toHaveBeenCalledWith(
+      "/companies/company-1/issues?status=todo&projection=board&limit=100",
+    );
+  });
+
   it("posts recovery action resolution to the source issue endpoint", async () => {
     await issuesApi.resolveRecoveryAction("issue-1", {
       actionId: "00000000-0000-0000-0000-0000000000aa",

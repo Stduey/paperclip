@@ -3166,6 +3166,7 @@ export function issueRoutes(
     const attention = req.query.attention as string | undefined;
     const sortField = req.query.sortField as string | undefined;
     const sortDir = req.query.sortDir as string | undefined;
+    const projection = req.query.projection as string | undefined;
     const hasPlanDocument = parseOptionalBooleanQuery(req.query.hasPlanDocument);
     const assigneeAgentFilterRaw = req.query.assigneeAgentId;
     let assigneeAgentId: string | null | undefined;
@@ -3204,6 +3205,10 @@ export function issueRoutes(
     }
     if (sortDir !== undefined && sortDir !== "asc" && sortDir !== "desc") {
       res.status(400).json({ error: "sortDir must be 'asc' or 'desc' when provided" });
+      return;
+    }
+    if (projection !== undefined && projection !== "board" && projection !== "full") {
+      res.status(400).json({ error: "projection must be 'board' or 'full' when provided" });
       return;
     }
     if (hasPlanDocument === null) {
@@ -3256,6 +3261,7 @@ export function issueRoutes(
       includeBlockedBy: req.query.includeBlockedBy === "true" || req.query.includeBlockedBy === "1",
       includeBlockedInboxAttention:
         req.query.includeBlockedInboxAttention === "true" || req.query.includeBlockedInboxAttention === "1",
+      projection: projection === "board" ? "board" : undefined,
       hasPlanDocument,
       q: req.query.q as string | undefined,
       limit,

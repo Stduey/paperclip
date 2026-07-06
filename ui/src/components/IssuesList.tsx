@@ -749,6 +749,7 @@ export function IssuesList({
           projectId,
           status,
           limit: ISSUE_BOARD_COLUMN_RESULT_LIMIT,
+          projection: "board",
           ...(enableRoutineVisibilityFilter ? { includeRoutineExecutions: true } : {}),
         }),
       enabled: !!selectedCompanyId && viewState.viewMode === "board" && !searchWithinLoadedIssues,

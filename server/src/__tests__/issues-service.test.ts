@@ -2064,6 +2064,48 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     );
   });
 
+  it("omits optional productivity-review enrichment for board projection lists", async () => {
+    const companyId = randomUUID();
+    const sourceIssueId = randomUUID();
+    const reviewIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: sourceIssueId,
+        companyId,
+        title: "Source issue",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: reviewIssueId,
+        companyId,
+        title: "Review source issue",
+        status: "todo",
+        priority: "medium",
+        originKind: "issue_productivity_review",
+        originId: sourceIssueId,
+      },
+    ]);
+
+    const full = await svc.list(companyId, { status: "todo" });
+    expect(full.find((issue) => issue.id === sourceIssueId)?.productivityReview).toMatchObject({
+      reviewIssueId,
+      status: "todo",
+    });
+
+    const board = await svc.list(companyId, { status: "todo", projection: "board" });
+    expect(board.find((issue) => issue.id === sourceIssueId)?.productivityReview).toBeUndefined();
+    expect(board.find((issue) => issue.id === sourceIssueId)?.lastActivityAt).toBeInstanceOf(Date);
+  });
+
   it("paginates earlier comments in descending order from an anchor comment", async () => {
     const companyId = randomUUID();
     const issueId = randomUUID();

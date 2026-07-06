@@ -60,6 +60,7 @@ export const issuesApi = {
       includeRoutineExecutions?: boolean;
       includeBlockedBy?: boolean;
       includeBlockedInboxAttention?: boolean;
+      projection?: "full" | "board";
       hasPlanDocument?: boolean;
       q?: string;
       limit?: number;
@@ -89,6 +90,7 @@ export const issuesApi = {
     if (filters?.includeRoutineExecutions) params.set("includeRoutineExecutions", "true");
     if (filters?.includeBlockedBy) params.set("includeBlockedBy", "true");
     if (filters?.includeBlockedInboxAttention) params.set("includeBlockedInboxAttention", "true");
+    if (filters?.projection) params.set("projection", filters.projection);
     if (filters?.hasPlanDocument !== undefined) {
       params.set("hasPlanDocument", filters.hasPlanDocument ? "true" : "false");
     }
