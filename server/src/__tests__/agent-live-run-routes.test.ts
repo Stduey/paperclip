@@ -18,6 +18,17 @@ const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(),
 }));
 
+const mockAccessService = vi.hoisted(() => ({
+  canUser: vi.fn(async () => true),
+  decide: vi.fn(async (input: { action?: string }) => ({
+    allowed: true,
+    action: input.action,
+    reason: "allow_explicit_grant",
+    explanation: "Allowed by test grant.",
+  })),
+  hasPermission: vi.fn(async () => false),
+}));
+
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
@@ -57,14 +68,9 @@ function registerModuleMocks() {
     agentService: () => mockAgentService,
     agentInstructionsService: () => ({}),
     accessService: () => ({
-      canUser: vi.fn(async () => true),
-      decide: vi.fn(async (input: { action?: string }) => ({
-        allowed: true,
-        action: input.action,
-        reason: "allow_explicit_grant",
-        explanation: "Allowed by test grant.",
-      })),
-      hasPermission: vi.fn(async () => true),
+      canUser: mockAccessService.canUser,
+      decide: mockAccessService.decide,
+      hasPermission: mockAccessService.hasPermission,
     }),
     approvalService: () => ({}),
     companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
@@ -218,6 +224,8 @@ describe("agent live run routes", () => {
       companyId: "company-1",
       agentId: "agent-1",
       status: "running",
+      updatedAt: new Date("2026-04-10T09:31:00.000Z"),
+      createdAt: new Date("2026-04-10T09:29:59.000Z"),
     });
     mockHeartbeatService.getRunIssueSummary.mockResolvedValue({
       id: "run-1",
@@ -269,7 +277,7 @@ describe("agent live run routes", () => {
     );
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1");
+    expect(mockHeartbeatService.cancelRun.mock.calls[0]?.[0]).toBe("run-1");
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       companyId: "company-1",
       actorType: "agent",
@@ -301,6 +309,78 @@ describe("agent live run routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "heartbeat.cancelled",
     }));
+  });
+
+  it("allows a granted agent to cancel a cross-agent run that already has finishedAt set", async () => {
+    const actorRunId = "run-2";
+    mockAccessService.hasPermission.mockResolvedValueOnce(true);
+    mockHeartbeatService.getRun.mockResolvedValueOnce({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "agent-1",
+      status: "running",
+      finishedAt: new Date("2026-04-10T10:00:00.000Z"),
+      updatedAt: new Date("2026-04-10T09:59:00.000Z"),
+      createdAt: new Date("2026-04-10T09:29:59.000Z"),
+    });
+
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: "agent-2",
+        companyId: "company-1",
+        source: "agent_key",
+        runId: actorRunId,
+      }),
+      (baseUrl) => request(baseUrl).post("/api/heartbeat-runs/run-1/cancel"),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAccessService.hasPermission).toHaveBeenCalledWith(
+      "company-1",
+      "agent",
+      "agent-2",
+      "runs:cancel_terminal_or_stale",
+    );
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1", "Cancelled by narrow stale-run grant");
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      actorType: "agent",
+      actorId: "agent-2",
+      agentId: "agent-2",
+      runId: actorRunId,
+      details: {
+        agentId: "agent-1",
+        source: "narrow_terminal_or_stale_run_cancel_grant",
+      },
+    }));
+  });
+
+  it("denies a granted agent cancelling a fresh active cross-agent run", async () => {
+    mockAccessService.hasPermission.mockResolvedValueOnce(true);
+    mockHeartbeatService.getRun.mockResolvedValueOnce({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "agent-1",
+      status: "running",
+      finishedAt: null,
+      updatedAt: new Date(),
+      createdAt: new Date(),
+    });
+
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: "agent-2",
+        companyId: "company-1",
+        source: "agent_key",
+        runId: "run-2",
+      }),
+      (baseUrl) => request(baseUrl).post("/api/heartbeat-runs/run-1/cancel"),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Agents can only cancel cross-agent runs that are terminal or heartbeat-silent for more than 24 hours");
+    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
   });
 
   it("returns a compact active run payload for issue polling", async () => {

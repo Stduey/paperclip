@@ -1042,6 +1042,52 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(wakeup?.status).toBe("claimed");
   });
 
+  it("reaps non-terminal heartbeat rows that already have finishedAt set", async () => {
+    const { runId, wakeupRequestId, issueId } = await seedRunFixture({
+      agentStatus: "running",
+      includeIssue: true,
+      runError: "finished externally before status persisted",
+    });
+    const finishedAt = new Date("2026-03-19T00:10:00.000Z");
+    await db
+      .update(heartbeatRuns)
+      .set({ finishedAt, updatedAt: finishedAt })
+      .where(eq(heartbeatRuns.id, runId));
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapTerminalRuns();
+    expect(result).toEqual({ reaped: 1, runIds: [runId] });
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("failed");
+    expect(run?.finishedAt?.toISOString()).toBe(finishedAt.toISOString());
+    expect(run?.errorCode).toBe("terminal_run_reaped");
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup?.status).toBe("failed");
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.checkoutRunId).toBeNull();
+    expect(issue?.executionRunId).toBeTruthy();
+    expect(issue?.executionRunId).not.toBe(runId);
+
+    const recoveryRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, issue?.executionRunId ?? ""))
+      .then((rows) => rows[0] ?? null);
+    expect(["queued", "running"]).toContain(recoveryRun?.status);
+    expect(recoveryRun?.retryOfRunId).toBe(runId);
+  });
+
   it("queues exactly one retry when the recorded local pid is dead", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({
       agentStatus: "idle",

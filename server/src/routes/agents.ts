@@ -106,6 +106,7 @@ import { listInvalidOrgChainDescendantIds } from "../services/agent-invokability
 
 const RUN_LOG_DEFAULT_LIMIT_BYTES = 256_000;
 const RUN_LOG_MAX_LIMIT_BYTES = 1024 * 1024;
+const TERMINAL_OR_STALE_RUN_CANCEL_SILENCE_MS = 24 * 60 * 60 * 1000;
 
 function readRunLogLimitBytes(value: unknown) {
   const parsed = Number(value ?? RUN_LOG_DEFAULT_LIMIT_BYTES);
@@ -126,6 +127,24 @@ function readRunIssueId(context: Record<string, unknown> | null) {
   const paperclipIssue = readObject(context?.paperclipIssue);
   const nestedIssueId = paperclipIssue?.id;
   return typeof nestedIssueId === "string" && isUuidLike(nestedIssueId) ? nestedIssueId : null;
+}
+
+function terminalOrStaleCancelEligibility(run: {
+  finishedAt?: Date | string | null;
+  lastOutputAt?: Date | string | null;
+  updatedAt?: Date | string | null;
+  startedAt?: Date | string | null;
+  createdAt?: Date | string | null;
+}) {
+  if (run.finishedAt) {
+    return { allowed: true, reason: "finishedAt_set" };
+  }
+  const reference = run.lastOutputAt ?? run.updatedAt ?? run.startedAt ?? run.createdAt ?? null;
+  const referenceMs = reference ? new Date(reference).getTime() : Number.NaN;
+  if (Number.isFinite(referenceMs) && Date.now() - referenceMs > TERMINAL_OR_STALE_RUN_CANCEL_SILENCE_MS) {
+    return { allowed: true, reason: "heartbeat_silent_gt_24h" };
+  }
+  return { allowed: false, reason: "not_terminal_or_stale" };
 }
 
 export function agentRoutes(
@@ -2549,6 +2568,7 @@ export function agentRoutes(
       details: {
         canCreateAgents: agent.permissions?.canCreateAgents ?? false,
         canCreateSkills: agent.permissions?.canCreateSkills ?? true,
+        issueBoardAccess: agent.permissions?.issueBoardAccess ?? false,
         canAssignTasks: effectiveCanAssignTasks,
         trustPreset: agent.permissions?.trustPreset ?? "standard",
       },
@@ -3577,13 +3597,47 @@ export function agentRoutes(
     if (existing) {
       assertCompanyAccess(req, existing.companyId);
       if (req.actor.type === "agent" && existing.agentId !== req.actor.agentId) {
-        throw forbidden("Agents can only cancel their own runs");
+        const actorAgentId = req.actor.agentId;
+        const actorRunId = req.actor.runId?.trim();
+        if (!actorRunId) {
+          res.status(401).json({ error: "Agent run id required for cross-agent run cancellation" });
+          return;
+        }
+        const hasNarrowCancelGrant = actorAgentId
+          ? await access.hasPermission(
+              existing.companyId,
+              "agent",
+              actorAgentId,
+              "runs:cancel_terminal_or_stale",
+            )
+          : false;
+        if (!hasNarrowCancelGrant) {
+          throw forbidden("Agents can only cancel their own runs");
+        }
+        const eligibility = terminalOrStaleCancelEligibility(existing);
+        if (!eligibility.allowed) {
+          res.status(403).json({
+            error: "Agents can only cancel cross-agent runs that are terminal or heartbeat-silent for more than 24 hours",
+            details: {
+              runId,
+              targetAgentId: existing.agentId,
+              actorAgentId,
+              reason: eligibility.reason,
+            },
+          });
+          return;
+        }
       }
     } else if (req.actor.type === "agent") {
       res.status(404).json({ error: "Heartbeat run not found" });
       return;
     }
-    const run = await heartbeat.cancelRun(runId);
+    const run = await heartbeat.cancelRun(
+      runId,
+      req.actor.type === "agent" && existing && existing.agentId !== req.actor.agentId
+        ? "Cancelled by narrow stale-run grant"
+        : undefined,
+    );
 
     if (run) {
       const actor = getActorInfo(req);
@@ -3592,11 +3646,16 @@ export function agentRoutes(
         actorType: actor.actorType,
         actorId: actor.actorId,
         agentId: actor.agentId,
-        runId: req.actor.type === "agent" ? run.id : actor.runId,
+        runId: req.actor.type === "agent" && run.agentId === actor.agentId ? run.id : actor.runId,
         action: "heartbeat.cancelled",
         entityType: "heartbeat_run",
         entityId: run.id,
-        details: { agentId: run.agentId },
+        details: {
+          agentId: run.agentId,
+          ...(req.actor.type === "agent" && run.agentId !== actor.agentId
+            ? { source: "narrow_terminal_or_stale_run_cancel_grant" }
+            : {}),
+        },
       });
     }
 

@@ -19,6 +19,7 @@ import type { AgentApiKeyScope } from "../validators/agent.js";
 export interface AgentPermissions extends Record<string, unknown> {
   canCreateAgents: boolean;
   canCreateSkills?: boolean;
+  issueBoardAccess?: boolean;
   trustPreset?: TrustPreset;
   authorizationPolicy?: TrustAuthorizationPolicy;
 }

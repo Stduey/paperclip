@@ -9098,6 +9098,53 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return { reaped: reaped.length, runIds: reaped };
   }
 
+  async function reapTerminalRuns() {
+    const rows = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        inArray(heartbeatRuns.status, [...EXECUTION_PATH_HEARTBEAT_RUN_STATUSES]),
+        sql`${heartbeatRuns.finishedAt} is not null`,
+      ));
+
+    const runIds: string[] = [];
+    for (const run of rows) {
+      const terminalStatus = run.errorCode === "cancelled" ? "cancelled" : "failed";
+      const message = run.error ?? "Reaped non-terminal heartbeat run that already had finishedAt set";
+      const finalized = await setRunStatus(run.id, terminalStatus, {
+        finishedAt: run.finishedAt ?? new Date(),
+        error: message,
+        errorCode: run.errorCode ?? "terminal_run_reaped",
+      });
+      const finalRun = finalized ?? { ...run, status: terminalStatus, error: message };
+      await setWakeupStatus(run.wakeupRequestId, terminalStatus, {
+        finishedAt: finalRun.finishedAt ?? new Date(),
+        error: finalRun.error ?? message,
+      });
+      await releaseIssueExecutionAndPromote(finalRun);
+      await db
+        .update(issues)
+        .set({
+          checkoutRunId: null,
+          executionRunId: null,
+          executionAgentNameKey: null,
+          executionLockedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(issues.companyId, run.companyId),
+          or(eq(issues.checkoutRunId, run.id), eq(issues.executionRunId, run.id)),
+        ));
+      await finalizeAgentStatus(run.agentId, terminalStatus);
+      runIds.push(run.id);
+    }
+
+    if (runIds.length > 0) {
+      logger.warn({ reapedCount: runIds.length, runIds }, "reaped finished heartbeat runs left in non-terminal states");
+    }
+    return { reaped: runIds.length, runIds };
+  }
+
   async function resumeQueuedRuns() {
     const queuedRuns = await db
       .select({ agentId: heartbeatRuns.agentId })
@@ -13563,6 +13610,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     reportRunActivity: clearDetachedRunWarning,
 
     reapOrphanedRuns,
+    reapTerminalRuns,
 
     promoteDueScheduledRetries,
     retryScheduledRetryNow,

@@ -817,6 +817,57 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.addComment).not.toHaveBeenCalled();
   });
 
+  it("lets explicit issue-board-access agents post comments on another agent's issue", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo", assigneeAgentId: ownerAgentId }));
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: input.action === "issue:read",
+      action: input.action,
+      reason: input.action === "issue:read" ? "allow_explicit_grant" : "deny_missing_grant",
+      explanation: input.action === "issue:read" ? "Allowed by test read grant." : "Missing permission.",
+    }));
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === peerAgentId) return makeAgent(peerAgentId, { permissions: { canCreateAgents: false, issueBoardAccess: true } });
+      if (id === ownerAgentId) return makeAgent(ownerAgentId);
+      return null;
+    });
+
+    const res = await request(await createApp(peerActor()))
+      .post(`/api/issues/${issueId}/comments`)
+      .send({ body: "Board-access evidence comment." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      issueId,
+      "Board-access evidence comment.",
+      expect.objectContaining({ agentId: peerAgentId }),
+      expect.objectContaining({ authorType: "agent" }),
+    );
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
+  it("does not let issue-board-access agents perform true cross-assignee mutations", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo", assigneeAgentId: ownerAgentId }));
+    mockAccessService.decide.mockImplementation(async (input: { action: string }) => ({
+      allowed: input.action === "issue:read" || input.action === "issue:mutate",
+      action: input.action,
+      reason: input.action === "issue:read" ? "allow_explicit_grant" : "allow_explicit_grant",
+      explanation: "Allowed by test boundary default.",
+    }));
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === peerAgentId) return makeAgent(peerAgentId, { permissions: { canCreateAgents: false, issueBoardAccess: true } });
+      if (id === ownerAgentId) return makeAgent(ownerAgentId);
+      return null;
+    });
+
+    const res = await request(await createApp(peerActor()))
+      .patch(`/api/issues/${issueId}`)
+      .send({ status: "done" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Agent cannot mutate another agent's issue");
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
   it("passes an N100-style agent run id through when the assignee posts a run-backed comment", async () => {
     const n100RunId = "de0b7cfb-0000-4000-8000-000000000000";
     const app = await createApp({

@@ -2102,6 +2102,9 @@ export function issueRoutes(
       return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
     }
     const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");
+    if (!boundaryDecision.allowed && await hasAgentIssueBoardAccess(actorAgentId, issue.companyId)) {
+      return true;
+    }
     if (!boundaryDecision.allowed && await hasDirectChildRollupCommentGrant(issue, actorAgentId)) {
       return true;
     }
@@ -2155,6 +2158,12 @@ export function issueRoutes(
     if (runId) return runId;
     res.status(401).json({ error: "Agent run id required" });
     return null;
+  }
+
+  async function hasAgentIssueBoardAccess(actorAgentId: string, companyId: string) {
+    const actorAgent = await agentsSvc.getById(actorAgentId);
+    if (!actorAgent || actorAgent.companyId !== companyId) return false;
+    return actorAgent.permissions?.issueBoardAccess === true;
   }
 
   async function hasActiveCheckoutManagementOverride(
