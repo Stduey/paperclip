@@ -2439,7 +2439,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     });
   });
 
-  it("converts a continuation parked for review into a dependency wait on its open sub-tasks", async () => {
+  it("does not convert open sub-tasks into blockers for a continuation parked for review", async () => {
     const { companyId, agentId, issueId } = await seedStrandedIssueFixture({
       status: "in_progress",
       runStatus: "cancelled",
@@ -2488,8 +2488,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const heartbeat = heartbeatService(db);
     const result = await heartbeat.reconcileStrandedAssignedIssues();
 
-    expect(result.waitingOnReviewResolved).toBe(1);
-    expect(result.escalated).toBe(0);
+    expect(result.waitingOnReviewResolved).toBe(0);
     expect(result.issueIds).toEqual([issueId]);
 
     const umbrella = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
@@ -2497,27 +2496,21 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     // Original assignee is preserved — no reassignment to a recovery owner.
     expect(umbrella?.assigneeAgentId).toBe(agentId);
 
-    // Only the open children become first-class blockers; the done child is excluded.
+    // Child nesting remains traceability only; recovery must not re-mint child
+    // rows as first-class blockers after a deliberate de-link.
     const blockers = await sourceBlockerIssueIds(companyId, issueId);
-    expect(blockers.sort()).toEqual([openChildTodoId, openChildInProgressId].sort());
+    expect(blockers).toEqual([]);
 
-    // No stranded-recovery action/issue is opened for a deliberate wait.
-    const recoveryIssues = await db
-      .select()
+    const children = await db
+      .select({ id: issues.id, parentId: issues.parentId, status: issues.status })
       .from(issues)
-      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery")));
-    expect(recoveryIssues).toHaveLength(0);
+      .where(and(eq(issues.companyId, companyId), eq(issues.parentId, issueId)));
+    expect(children.map((child) => child.id).sort()).toEqual([openChildTodoId, openChildInProgressId, doneChildId].sort());
 
     const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
-    expect(comments).toHaveLength(1);
-    expect(comments[0]?.authorType).toBe("system");
-    expect(comments[0]?.body).toContain("This task is waiting on");
-    expect(comments[0]?.body).toContain("continue automatically");
-    expect(comments[0]?.body).toContain(`${issuePrefix}-10`);
-    expect(comments[0]?.body).toContain(`${issuePrefix}-11`);
-    expect(comments[0]?.body).not.toContain(`${issuePrefix}-12`);
-    // Plain language — the raw machine error code never leaks into the thread.
-    expect(comments[0]?.body).not.toContain("issue_continuation_waiting_on_review");
+    expect(comments.some((comment) => comment.body.includes("This task is waiting on"))).toBe(false);
+    expect(comments.some((comment) => comment.body.includes(`${issuePrefix}-10`))).toBe(false);
+    expect(comments.some((comment) => comment.body.includes(`${issuePrefix}-11`))).toBe(false);
 
     const activity = await db.select().from(activityLog).where(eq(activityLog.entityId, issueId));
     expect(
@@ -2527,7 +2520,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
           (event.details as { source?: string } | null)?.source ===
             "recovery.reconcile_continuation_waiting_on_review",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("converts a continuation parked for review into a dependency wait on its existing blockers", async () => {
