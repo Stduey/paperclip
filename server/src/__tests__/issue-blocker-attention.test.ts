@@ -172,6 +172,29 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     });
   });
 
+  it("does not infer blocker attention from children after first-class blockers are cleared", async () => {
+    const { companyId, agentId } = await createCompany("PCC");
+    const parentId = await insertIssue({ companyId, identifier: "PCC-1", title: "Parent", status: "blocked" });
+    await insertIssue({
+      companyId,
+      identifier: "PCC-2",
+      title: "Open child",
+      status: "todo",
+      parentId,
+      assigneeAgentId: agentId,
+    });
+
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
+
+    expect(parent?.blockerAttention).toMatchObject({
+      state: "none",
+      unresolvedBlockerCount: 0,
+      attentionBlockerCount: 0,
+      sampleBlockerIdentifier: null,
+    });
+    await expect(svc.list(companyId, { attention: "blocked" })).resolves.toEqual([]);
+  });
+
   it("classifies an assigned backlog blocker leaf without a waiting path as attention-needed", async () => {
     const { companyId, agentId } = await createCompany("PBB");
     const parentId = await insertIssue({ companyId, identifier: "PBB-1", title: "Parent", status: "blocked" });
