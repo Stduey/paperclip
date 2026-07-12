@@ -6,6 +6,7 @@ const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
   create: vi.fn(),
+  update: vi.fn(),
   createWorkspace: vi.fn(),
   resolveByReference: vi.fn(),
 }));
@@ -72,14 +73,30 @@ function registerModuleMocks() {
   }));
 }
 
-async function createApp(routeType: "project" | "goal") {
+type TestActor =
+  | {
+    type: "board";
+    userId: string;
+    companyIds: string[];
+    source: "local_implicit";
+    isInstanceAdmin: boolean;
+  }
+  | {
+    type: "agent";
+    agentId: string;
+    companyId: string;
+    runId: string;
+    source: "agent_jwt";
+  };
+
+async function createApp(routeType: "project" | "goal", actor?: TestActor) {
   const { errorHandler } = await vi.importActual<typeof import("../middleware/index.js")>(
     "../middleware/index.js",
   );
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
+    (req as any).actor = actor ?? {
       type: "board",
       userId: "board-user",
       companyIds: ["company-1"],
@@ -132,6 +149,24 @@ describe("project and goal telemetry routes", () => {
       description: null,
       status: "backlog",
     });
+    mockProjectService.getById.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      name: "Telemetry project",
+      description: null,
+      status: "backlog",
+      archivedAt: null,
+      workspaces: [],
+    });
+    mockProjectService.update.mockResolvedValue({
+      id: "project-1",
+      companyId: "company-1",
+      name: "Telemetry project",
+      description: null,
+      status: "backlog",
+      archivedAt: new Date("2026-07-12T00:00:00.000Z"),
+      workspaces: [],
+    });
     mockGoalService.create.mockResolvedValue({
       id: "goal-1",
       companyId: "company-1",
@@ -161,5 +196,30 @@ describe("project and goal telemetry routes", () => {
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
     expect(mockTelemetryTrack).toHaveBeenCalledWith("goal.created", { goal_level: "team" });
+  });
+
+  it("forwards the actor run id when an agent updates a project", async () => {
+    const app = await createApp("project", {
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      runId: "run-1",
+      source: "agent_jwt",
+    });
+
+    const res = await request(app)
+      .patch("/api/projects/project-1")
+      .send({ archivedAt: "2026-07-12T00:00:00.000Z" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      actorType: "agent",
+      actorId: "agent-1",
+      agentId: "agent-1",
+      runId: "run-1",
+      action: "project.updated",
+      entityType: "project",
+      entityId: "project-1",
+    }));
   });
 });
