@@ -451,6 +451,44 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     expect(agent?.lastHeartbeatAt?.getTime()).toBeGreaterThan(now.getTime() - 120_000);
   });
 
+  it("claims due timer slots before enqueueing so duplicate timer scans keep interval cadence", async () => {
+    const { agentId } = await seedCompanyAndAgent({
+      heartbeatConfig: {
+        enabled: true,
+        intervalSec: 60,
+      },
+    });
+    const now = new Date();
+    await db
+      .update(agents)
+      .set({ lastHeartbeatAt: new Date(now.getTime() - 120_000) })
+      .where(eq(agents.id, agentId));
+
+    const firstTick = await heartbeat.tickTimers(now);
+    const duplicateTick = await heartbeat.tickTimers(now);
+    const earlyTick = await heartbeat.tickTimers(new Date(now.getTime() + 30_000));
+    const dueTick = await heartbeat.tickTimers(new Date(now.getTime() + 60_000));
+
+    expect(firstTick.enqueued).toBe(1);
+    expect(duplicateTick.enqueued).toBe(0);
+    expect(earlyTick.enqueued).toBe(0);
+    expect(dueTick.enqueued).toBe(1);
+
+    const wakeups = await db
+      .select({ id: agentWakeupRequests.id, reason: agentWakeupRequests.reason })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId));
+    const runs = await db
+      .select({ id: heartbeatRuns.id, invocationSource: heartbeatRuns.invocationSource })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+
+    expect(wakeups).toHaveLength(2);
+    expect(wakeups.map((wakeup) => wakeup.reason)).toEqual(["heartbeat_timer", "heartbeat_timer"]);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.invocationSource).toBe("timer");
+  });
+
   it("allows generic timer wakes when the agent has assigned todo work", async () => {
     const { companyId, agentId } = await seedCompanyAndAgent({
       heartbeatConfig: {

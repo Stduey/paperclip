@@ -8224,6 +8224,27 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       .where(eq(agents.id, agentId));
   }
 
+  async function claimDueTimerHeartbeat(agent: typeof agents.$inferSelect, policy: ReturnType<typeof parseHeartbeatPolicy>, now: Date) {
+    const dueBefore = new Date(now.getTime() - policy.intervalSec * 1000);
+    const [claimed] = await db
+      .update(agents)
+      .set({
+        lastHeartbeatAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(agents.id, agent.id),
+          lte(
+            sql<Date>`coalesce(${agents.lastHeartbeatAt}, ${agents.createdAt})`,
+            sql<Date>`${dueBefore.toISOString()}::timestamptz`,
+          ),
+        ),
+      )
+      .returning({ id: agents.id });
+    return Boolean(claimed);
+  }
+
   function parseMaxTurnContinuationPolicy(agent: typeof agents.$inferSelect): MaxTurnContinuationPolicy {
     const runtimeConfig = parseObject(agent.runtimeConfig);
     const heartbeat = parseObject(runtimeConfig.heartbeat);
@@ -13669,9 +13690,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         if (!policy.enabled || policy.intervalSec <= 0) continue;
 
         checked += 1;
-        const baseline = new Date(agent.lastHeartbeatAt ?? agent.createdAt).getTime();
-        const elapsedMs = now.getTime() - baseline;
-        if (elapsedMs < policy.intervalSec * 1000) continue;
+        const claimed = await claimDueTimerHeartbeat(agent, policy, now);
+        if (!claimed) continue;
 
         const run = await enqueueWakeup(agent.id, {
           source: "timer",
