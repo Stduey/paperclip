@@ -2160,6 +2160,23 @@ export function issueRoutes(
     return null;
   }
 
+  async function assertAgentRunContextValid(req: Request, res: Response, companyId: string) {
+    if (req.actor.type !== "agent") return true;
+    const actorAgentId = req.actor.agentId;
+    if (!actorAgentId) {
+      res.status(403).json({ error: "Agent authentication required" });
+      return false;
+    }
+    const runId = requireAgentRunId(req, res);
+    if (!runId) return false;
+    const run = await heartbeat.getRun(runId);
+    if (!run || run.agentId !== actorAgentId || run.companyId !== companyId) {
+      res.status(401).json({ error: "Valid agent run id required" });
+      return false;
+    }
+    return true;
+  }
+
   async function hasAgentIssueBoardAccess(actorAgentId: string, companyId: string) {
     const actorAgent = await agentsSvc.getById(actorAgentId);
     if (!actorAgent || actorAgent.companyId !== companyId) return false;
@@ -5983,6 +6000,10 @@ export function issueRoutes(
       existing.companyId,
       req.body.assigneeAgentId as string | null | undefined,
     );
+    if (
+      req.body.description !== undefined &&
+      !(await assertAgentRunContextValid(req, res, existing.companyId))
+    ) return;
     const titleOrDescriptionChanged = req.body.title !== undefined || req.body.description !== undefined;
     const existingRelations =
       Array.isArray(req.body.blockedByIssueIds)

@@ -1267,6 +1267,67 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockStorageService.putFile).not.toHaveBeenCalled();
   });
 
+  it("rejects agent issue description patches without a run id even when checkout ownership is not required", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo" }));
+    const app = await createApp({
+      type: "agent",
+      agentId: ownerAgentId,
+      companyId,
+      source: "agent_key",
+      // intentionally no runId
+    });
+
+    const res = await request(app)
+      .patch(`/api/issues/${issueId}`)
+      .send({ description: "Body write without run context." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(res.body.error).toBe("Agent run id required");
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects agent issue description patches with a run owned by another agent", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo" }));
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: ownerRunId,
+      agentId: peerAgentId,
+      companyId,
+    });
+    const app = await createApp(ownerActor());
+
+    const res = await request(app)
+      .patch(`/api/issues/${issueId}`)
+      .send({ description: "Body write with another agent's run." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(res.body.error).toBe("Valid agent run id required");
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
+  it("allows agent issue description patches with a valid matching run id", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo" }));
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: ownerRunId,
+      agentId: ownerAgentId,
+      companyId,
+    });
+    const app = await createApp(ownerActor());
+
+    await request(app)
+      .patch(`/api/issues/${issueId}`)
+      .send({ description: "Body write with run context." })
+      .expect(200);
+
+    expect(mockHeartbeatService.getRun).toHaveBeenCalledWith(ownerRunId);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({
+        description: "Body write with run context.",
+        actorAgentId: ownerAgentId,
+      }),
+    );
+  });
+
   it("allows the checked-out owner with the matching run id to patch and update documents", async () => {
     const app = await createApp(ownerActor());
 
