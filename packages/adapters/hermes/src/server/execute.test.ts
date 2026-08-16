@@ -38,7 +38,7 @@ describe("Hermes execution output", () => {
       exitCode: 0,
       signal: null,
       timedOut: false,
-      stdout: "The requested verification is complete.\nsession_id: session-1\n",
+      stdout: "[done] ┊ 💻 $ git status --short  0.1s (0.5s)\nThe requested verification is complete.\nsession_id: session-1\n",
       stderr: "",
     });
 
@@ -65,5 +65,22 @@ describe("Hermes execution output", () => {
     expect(result.errorMessage).toContain("submitted prompt");
     expect(result.summary).toBeUndefined();
     expect(result.resultJson).toMatchObject({ result: "", prompt_echo: true });
+  });
+
+  it("fails a benign completion when Hermes used no tools", async () => {
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "Everything looks healthy.\nsession_id: session-1\n",
+      stderr: "",
+    });
+
+    const result = await execute(context());
+
+    expect(result.errorCode).toBe("no_tool_use");
+    expect(result.errorMessage).toContain("without executing any tools");
+    expect(result.summary).toBeUndefined();
+    expect(result.resultJson).toMatchObject({ result: "", no_tool_use: true });
   });
 });

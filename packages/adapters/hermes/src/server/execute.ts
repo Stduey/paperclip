@@ -277,6 +277,22 @@ function isPromptEchoResponse(response: string, prompt: string): boolean {
     && normalizedPrompt.slice(0, comparableLength) === normalizedResponse.slice(0, comparableLength);
 }
 
+/**
+ * Hermes emits tool activity as either a non-quiet `[tool]` line or a
+ * `┊ …` tool-completion line. Assistant messages use `┊ 💬` instead, so they
+ * are deliberately excluded. A clean, zero-exit response with neither signal
+ * did not perform the work Paperclip dispatched and must not score green.
+ */
+function hasToolUse(stdout: string): boolean {
+  return stdout.split("\n").some((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[tool]")) return true;
+
+    const completion = trimmed.replace(/^\[done\]\s*/, "");
+    return completion.startsWith("┊") && !/^┊\s*💬/.test(completion);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Output parsing
 // ---------------------------------------------------------------------------
@@ -588,25 +604,36 @@ export async function execute(
   }
 
   const promptEchoed = Boolean(parsed.response && isPromptEchoResponse(parsed.response, prompt));
+  const noToolUse =
+    !promptEchoed &&
+    !result.timedOut &&
+    (result.exitCode ?? 0) === 0 &&
+    !parsed.errorMessage &&
+    !hasToolUse(result.stdout || "");
   if (promptEchoed) {
     executionResult.errorCode = "prompt_echo";
     executionResult.errorMessage =
       "Hermes returned the submitted prompt instead of a completion; refusing to mark this run successful.";
+  } else if (noToolUse) {
+    executionResult.errorCode = "no_tool_use";
+    executionResult.errorMessage =
+      "Hermes returned a completion without executing any tools; refusing to mark this run successful.";
   }
 
-  // Summary from agent response. Never surface a submitted-prompt echo as a
-  // completion comment or continuation summary.
-  if (parsed.response && !promptEchoed) {
+  // Summary from agent response. Never surface a submitted-prompt echo or a
+  // no-tool response as a completion comment or continuation summary.
+  if (parsed.response && !promptEchoed && !noToolUse) {
     executionResult.summary = parsed.response.slice(0, 2000);
   }
 
   // Set resultJson so Paperclip can persist run metadata (used for UI display + auto-comments)
   executionResult.resultJson = {
-    result: promptEchoed ? "" : (parsed.response || ""),
+    result: promptEchoed || noToolUse ? "" : (parsed.response || ""),
     session_id: parsed.sessionId || null,
     usage: parsed.usage || null,
     cost_usd: parsed.costUsd ?? null,
     ...(promptEchoed ? { prompt_echo: true } : {}),
+    ...(noToolUse ? { no_tool_use: true } : {}),
   };
 
   // Store session ID for next run
