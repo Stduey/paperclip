@@ -254,6 +254,29 @@ function cleanResponse(raw: string): string {
     .trim();
 }
 
+/**
+ * Hermes normal-mode output begins with `Query: <submitted prompt>`.  That
+ * diagnostic echo is not an agent completion, and treating it as one causes
+ * Paperclip to record a green run with the agent's own instructions as its
+ * summary.
+ */
+function isPromptEchoResponse(response: string, prompt: string): boolean {
+  const trimmed = response.trimStart();
+  if (!trimmed.startsWith("Query:")) return false;
+
+  const normalizedResponse = trimmed
+    .slice("Query:".length)
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalizedPrompt = prompt.replace(/\s+/g, " ").trim();
+  const comparableLength = Math.min(normalizedResponse.length, normalizedPrompt.length);
+
+  // Require enough of the submitted prompt to avoid rejecting a legitimate
+  // answer that happens to start with the word "Query".
+  return comparableLength >= 80
+    && normalizedPrompt.slice(0, comparableLength) === normalizedResponse.slice(0, comparableLength);
+}
+
 // ---------------------------------------------------------------------------
 // Output parsing
 // ---------------------------------------------------------------------------
@@ -407,7 +430,10 @@ export async function execute(
 
   // ── Build command args ─────────────────────────────────────────────────
   // Use -Q (quiet) to get clean output: just response + session_id line
-  const useQuiet = cfgBoolean(config.quiet) === true; // default false
+  // Hermes's normal output starts by printing `Query: <submitted prompt>`.
+  // Quiet mode is the machine-readable contract: final response + session id.
+  // Keep an explicit false available only for interactive troubleshooting.
+  const useQuiet = cfgBoolean(config.quiet) !== false;
   const args: string[] = ["chat", "-q", prompt];
   if (useQuiet) args.push("-Q");
 
@@ -561,17 +587,26 @@ export async function execute(
     executionResult.costUsd = parsed.costUsd;
   }
 
-  // Summary from agent response
-  if (parsed.response) {
+  const promptEchoed = Boolean(parsed.response && isPromptEchoResponse(parsed.response, prompt));
+  if (promptEchoed) {
+    executionResult.errorCode = "prompt_echo";
+    executionResult.errorMessage =
+      "Hermes returned the submitted prompt instead of a completion; refusing to mark this run successful.";
+  }
+
+  // Summary from agent response. Never surface a submitted-prompt echo as a
+  // completion comment or continuation summary.
+  if (parsed.response && !promptEchoed) {
     executionResult.summary = parsed.response.slice(0, 2000);
   }
 
   // Set resultJson so Paperclip can persist run metadata (used for UI display + auto-comments)
   executionResult.resultJson = {
-    result: parsed.response || "",
+    result: promptEchoed ? "" : (parsed.response || ""),
     session_id: parsed.sessionId || null,
     usage: parsed.usage || null,
     cost_usd: parsed.costUsd ?? null,
+    ...(promptEchoed ? { prompt_echo: true } : {}),
   };
 
   // Store session ID for next run
