@@ -83,4 +83,32 @@ describe("Hermes execution output", () => {
     expect(result.summary).toBeUndefined();
     expect(result.resultJson).toMatchObject({ result: "", no_tool_use: true });
   });
+
+  it("fails assistant-only quiet output when Hermes used no tools", async () => {
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "┊ 💬 I reviewed it and everything looks healthy.\nsession_id: session-1\n",
+      stderr: "",
+    });
+
+    const result = await execute(context());
+
+    expect(result.errorCode).toBe("no_tool_use");
+  });
+
+  it("fails assistant-only pipe output when Hermes used no tools", async () => {
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "[done] ┊ 💬 All good here.\nsession_id: session-1\n",
+      stderr: "",
+    });
+
+    const result = await execute(context());
+
+    expect(result.errorCode).toBe("no_tool_use");
+  });
 });
